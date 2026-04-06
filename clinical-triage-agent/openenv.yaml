@@ -1,0 +1,21 @@
+spec_version: 1
+name: clinical-triage-agent
+tasks:
+  - id: 0
+    name: easy
+    description: "3 patients, relaxed resources, mostly visible info"
+  - id: 1
+    name: medium
+    description: "8 patients, overlapping symptoms, limited ICU, requires ASK"
+  - id: 2
+    name: hard
+    description: "20 patients, dynamic waves, critical event mid-episode"
+observation_space: structured_dict
+action_space: typed_discrete
+reward_range: [0.0, 1.0]
+partial_observability: true
+seed_support: true
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860

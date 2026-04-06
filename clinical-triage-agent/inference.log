@@ -1,0 +1,3 @@
+usage: inference.py [-h] [--task_id {0,1,2}] [--seed SEED] [--env_url ENV_URL]
+                    [--max_steps MAX_STEPS] [--no_llm]
+inference.py: error: unrecognized arguments: --agent heuristic
