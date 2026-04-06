@@ -350,17 +350,30 @@ class TriageEnvironment(Environment):
         if patient is None:
             return 0.0, f"ERROR: Patient {action.patient_id} not found."
 
-        if patient.visible.triage_status == "triaged":
-            return 0.0, f"Patient {action.patient_id} already triaged."
+        is_retriage = patient.visible.triage_status == "triaged"
+        old_pathway = None
+        if is_retriage:
+            # We allow re-triage for resource management (Task 3 requirement)
+            try:
+                old_pathway = TriagePathway(patient.triaged_pathway)
+            except Exception:
+                old_pathway = None
 
         if action.level is None or action.pathway is None:
             return 0.0, "ERROR: TRIAGE action requires 'level' and 'pathway'."
 
-        # Compute steps spent on this patient
+        resources = self._state.resources
+        # 1. If re-triage, release OLD resources first to make room for new assignment
+        if is_retriage and old_pathway:
+            if old_pathway == TriagePathway.RESUS:
+                resources.resus_bays_used = max(0, resources.resus_bays_used - 1)
+            elif old_pathway == TriagePathway.MAJORS:
+                resources.majors_beds_used = max(0, resources.majors_beds_used - 1)
+
+        # 2. Compute reward with cleaned-up resources
         start_step = self._patient_step_start.get(action.patient_id, 0)
         steps_for_patient = self._state.step_count - start_step
 
-        resources = self._state.resources
         reward, components = compute_triage_reward(
             action=action,
             patient=patient,
@@ -506,6 +519,10 @@ class TriageEnvironment(Environment):
             if p.visible.triage_status == "pending"
         ]
         if not pending:
+            # Special case for Task 3: don't end if a future wave is expected
+            wave_step = TASK_CONFIGS[self._state.task_id].get("wave_at_step")
+            if wave_step and self._state.step_count < wave_step and not self._state.wave_triggered:
+                return False
             return True
         return False
 

@@ -1,1 +1,16 @@
+# Python
 venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+*.pid
+*.txt
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+env/__pycache__

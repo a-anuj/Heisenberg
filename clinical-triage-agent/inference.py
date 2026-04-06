@@ -84,47 +84,29 @@ class LLMTriageAgent:
 
     SYSTEM_PROMPT = """You are an expert clinical triage agent operating in an emergency department simulation.
 
-Your goal is to correctly triage all patients while maximizing reward and optimizing resources.
+Your goal: Correct triage while maximizing efficiency and managing critical resources.
 
 ---
 
 ### ACTION TYPES
-- ASK: Reveal hidden info. {"type": "ASK", "patient_id": "PT-001", "question_key": "pain_scale"}
-  question_key options: pain_scale, duration, history, medications
-- TRIAGE: Assign level+pathway. {"type": "TRIAGE", "patient_id": "PT-001", "level": 2, "pathway": "majors"}
-- ESCALATE: Escalate critical patient. {"type": "ESCALATE", "patient_id": "PT-001"}
+- ASK: Reveal hidden info (max 2 per patient). {"type": "ASK", "patient_id": "PT-001", "question_key": "pain_scale"}
+- TRIAGE: Assign level+pathway. Supports Re-triage (updating an existing decision).
+- ESCALATE: Escalate critical/ambiguous cases.
 
 ---
 
-### CORE RULES
-- Each patient must be triaged EXACTLY ONCE.
-- Never repeat a patient_id for a TRIAGE action.
-- Always triage the most critical untriaged patient first.
-- Priority: Level 1 (Immediate) > Level 2–3 (Urgent) > Level 4–5 (Non-urgent).
-
----
-
-### STRATEGY FOR PARTIAL OBSERVABILITY (TASK 2)
-- You have a limit of 2 ASK actions per patient.
-- If vitals or chief complaint are ambiguous, use ASK for: 1. duration, 2. pain_scale, 3. history.
-- After 2 questions, you MUST TRIAGE the patient. Do not over-ask.
-- If symptoms are clear (e.g., Cardiac arrest) and vitals are critically abnormal, TRIAGE immediately.
-
----
-
-### PATHWAY MAPPING (STRICT)
-- Level 1 → "resus"
-- Level 2 or 3 → "majors"
-- Level 4 or 5 → "fast_track"
-
-### RESOURCE-AWARE ROUTING
-- If pathway == "resus" AND resus_available == 0, you MUST downgrade to "majors" to avoid capacity violations.
-- Always check the 'resources' object in the observation before assigning 'resus'.
-
----
-
-### OUTPUT FORMAT
-Return only a JSON object for ONE action. Respond with valid JSON only."""
+### TASK 3: DYNAMIC EVENTS & RESOURCE MANAGEMENT
+- **Interrupt Handling**: When a new batch of patients arrive (Wave 2), immediately scan for Level 1 cases (e.g., paediatric arrest, unconscious). You MUST triage them to 'resus' within 2 steps of arrival.
+- **Resource Reallocation**: If 'resus' bays are full (check 'resources' object) and a new Level 1 patient arrives:
+  1. Identify an existing patient in 'resus'.
+  2. Re-triage them to 'majors' to free up the bay.
+  3. In the next step, assign the new critical patient to 'resus'.
+- **Adaptive Questioning**: Choose only ONE most relevant question:
+  - Chest pain / SOB → "duration"
+  - Injury / Pain → "pain_scale"
+  - Unclear symptoms → "history"
+- Only ask a second question if the first is highly ambiguous.
+- Max 1-2 questions per patient TOTAL. Respond with valid JSON for ONE action only. """
 
     def __init__(self, api_base_url: str, model: str, api_key: str) -> None:
         self.api_base_url = api_base_url.rstrip("/")
@@ -209,6 +191,7 @@ def run_episode(
     rewards: List[float] = []
     errors: List[Optional[str]] = []
     ask_counts: Dict[str, int] = {}
+    processed_patients: set[str] = set()
     escalated_patients: set[str] = set()
     total_steps = 0
     final_score = 0.0
@@ -230,14 +213,16 @@ def run_episode(
                 try:
                     action = agent.decide(obs, step)
                 except Exception:
-                    action = _fallback_heuristic_action(obs, ask_counts, escalated_patients)
+                    action = _fallback_heuristic_action(obs, ask_counts, escalated_patients, processed_patients)
             else:
-                action = _fallback_heuristic_action(obs, ask_counts, escalated_patients)
+                action = _fallback_heuristic_action(obs, ask_counts, escalated_patients, processed_patients)
 
             # Process action for local state tracking
             if action.get("type") == "ASK" and action.get("patient_id"):
                 pid = action["patient_id"]
                 ask_counts[pid] = ask_counts.get(pid, 0) + 1
+            elif action.get("type") == "TRIAGE" and action.get("patient_id"):
+                processed_patients.add(action["patient_id"])
             elif action.get("type") == "ESCALATE" and action.get("patient_id"):
                 escalated_patients.add(action["patient_id"])
 
@@ -309,75 +294,103 @@ def _fallback_heuristic_action(
     obs: Dict[str, Any],
     ask_counts: Dict[str, int],
     escalated_patients: set[str],
+    processed_patients: set[str] = None
 ) -> Dict[str, Any]:
     """
-    Improved heuristic fallback action for Task 2.
+    Advanced heuristic action for Task 3: Priority queue + Loop prevention.
     """
+    if processed_patients is None:
+        processed_patients = set()
+        
     queue = obs.get("patient_queue", [])
-    pending = [p for p in queue if p.get("triage_status") == "pending"]
+    # Only act on patients NOT in processed_patients
+    available = [p for p in queue if p["patient_id"] not in processed_patients]
+    
     resources = obs.get("resources", {})
     resus_avail = resources.get("resus_bays_total", 0) - resources.get("resus_bays_used", 0)
 
+    # 1. SCAN AVAILABLE FOR CRITICAL ARRESTS
+    resus_needs = []
+    for p in available:
+        comp = p.get("chief_complaint", "").lower()
+        v = p.get("vitals", {})
+        spo2 = v.get("spo2", 97.0)
+        hr = v.get("heart_rate", 80)
+        
+        # Determine if they look like Level 1
+        is_l1 = (spo2 < 85 or hr > 160 or hr < 35 or "arrest" in comp or "unconscious" in comp)
+        status = p.get("triage_status")
+        pathway = p.get("triage_pathway") # This might be in the patient summary if triaged
+        
+        # If they need resus but aren't there
+        if is_l1 and (status != "triaged" or pathway != "resus"):
+            resus_needs.append(p)
+
+    # 2. HANDLE CRITICAL INTERRUPT
+    if resus_needs:
+        p = resus_needs[0]
+        pid = p["patient_id"]
+        
+        if resus_avail > 0:
+            return {"type": "TRIAGE", "patient_id": pid, "level": 1, "pathway": "resus"}
+        else:
+            # RESOURCE REALLOCATION: Move someone out of resus to make room
+            # Find someone already in resus who can be downgraded
+            in_resus = [pt for pt in queue if pt.get("triage_status") == "triaged" and pt.get("triage_pathway") == "resus"]
+            if in_resus:
+                # Re-triage them to majors
+                return {"type": "TRIAGE", "patient_id": in_resus[0]["patient_id"], "level": 2, "pathway": "majors"}
+            else:
+                # No one to move? best effort
+                return {"type": "TRIAGE", "patient_id": pid, "level": 1, "pathway": "majors"}
+
+    # 3. PENDING PATIENTS SCAN (Priority: 2 > 3 > 4)
+    pending = [p for p in queue if p.get("triage_status") == "pending"]
     if not pending:
         return {"type": "NO_OP"}
 
-    # Evaluate all pending patients and pick best to act on
-    # In Task 2, we should prioritize critical vitals first
+    # Sort pending by severity (heuristic)
+    def _severity_rank(pt):
+        v = pt.get("vitals", {})
+        s = v.get("spo2", 97.0)
+        if s < 91: return 0
+        if s < 94: return 1
+        return 2
+    
+    pending.sort(key=_severity_rank)
     patient = pending[0]
     pid = patient["patient_id"]
-    vitals = patient.get("vitals", {})
-    comp = patient.get("chief_complaint", "").lower()
-    
-    hr = vitals.get("heart_rate", 80)
-    spo2 = vitals.get("spo2", 97.0)
-    rr = vitals.get("respiratory_rate", 16)
     rev = patient.get("revealed_info", {})
-    
+    comp = patient.get("chief_complaint", "").lower()
+    v = patient.get("vitals", {})
+    hr = v.get("heart_rate", 80)
+    spo2 = v.get("spo2", 97.0)
     asks = ask_counts.get(pid, 0)
 
-    # 1. Immediate Critical Symptoms -> resus (No ASK needed)
-    is_immediate = (spo2 < 85 or hr > 160 or hr < 30 or rr > 40 or "arrest" in comp or "unconscious" in comp)
-    
-    # 2. Ambiguity Check: If vitals or complaint suggest severity 1-3 but hidden fields unknown
-    needs_info = (asks < 2) and (
-        "chest pain" in comp or "shortness of breath" in comp or "abdominal" in comp or
-        hr > 110 or hr < 50 or spo2 < 93 or rr > 26
-    )
-
-    if needs_info and not is_immediate:
-        keys = ["duration", "pain_scale", "history"]
-        # Find first key not already in rev
-        for k in keys:
-            if k not in rev:
-                return {"type": "ASK", "patient_id": pid, "question_key": k}
-
-    # 3. ESCALATE as last resort if high risk but low info
-    if (asks >= 2) and is_immediate and pid not in escalated_patients and len(escalated_patients) < 1:
-        return {"type": "ESCALATE", "patient_id": pid}
-
-    # 4. TRIAGE logic
-    if is_immediate:
-        level, pathway = 1, "resus"
-    elif "chest pain" in comp or "shortness of breath" in comp:
-        dur = rev.get("duration", "")
-        # Chest pain + high pain -> Level 2
-        pain = int(rev.get("pain_scale", 5)) if isinstance(rev.get("pain_scale"), (int, float)) else 5
-        if pain > 7:
-            level, pathway = 2, "majors"
+    # Decision logic: Adaptive ASK selection
+    if asks < 1:
+        # Initial selective ASK
+        if "chest pain" in comp or "breath" in comp:
+            if "duration" not in rev:
+                return {"type": "ASK", "patient_id": pid, "question_key": "duration"}
+        elif "injury" in comp or "pain" in comp or "fall" in comp:
+            if "pain_scale" not in rev:
+                return {"type": "ASK", "patient_id": pid, "question_key": "pain_scale"}
         else:
-            level, pathway = 3, "majors"
-    elif spo2 < 94 or hr > 110 or rr > 24:
-        level, pathway = 3, "majors"
-    elif hr > 95 or "fever" in comp or "pain" in comp:
-        level, pathway = 4, "fast_track"
-    else:
-        level, pathway = 5, "fast_track"
+            if "history" not in rev:
+                return {"type": "ASK", "patient_id": pid, "question_key": "history"}
+    elif asks < 2:
+        # Second question ONLY if still critical/ambiguous
+        if (spo2 < 94 or "chest" in comp) and "history" not in rev:
+            return {"type": "ASK", "patient_id": pid, "question_key": "history"}
 
-    # Capacity Awareness
-    if pathway == "resus" and resus_avail <= 0:
-        logger_name = "clinical-triage-agent"
-        # Since uvicorn log is separate, we just downgrade
-        pathway = "majors"
+    # TRIAGE mapping (after 1-2 ASKs)
+    if spo2 < 91 or hr > 125:
+        level, pathway = 2, "majors"
+    elif spo2 < 95 or hr > 105 or "pain" in comp:
+        level, pathway = 3, "majors"
+    else:
+        level, pathway = 4, "fast_track"
 
     return {
         "type": "TRIAGE",
