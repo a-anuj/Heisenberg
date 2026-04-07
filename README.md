@@ -3,4 +3,4 @@ A production-grade, OpenEnv-compliant clinical triage simulation environment for
 
 ## Setup & Testing
 For installation, configuration, and benchmark testing instructions, please refer to:
-[**setup.md**](../setup.md)
+[**setup.md**](setup.md)
