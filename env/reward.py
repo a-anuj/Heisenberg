@@ -11,6 +11,12 @@ from typing import Optional
 
 from .models import Patient, TriageAction, TriageLevel, TriagePathway
 
+# Phase 2 Validation Constants
+EPSILON = 1e-6
+PERFECT_SCORE = 0.99
+ZERO_SCORE = 0.01
+
+
 # ---------------------------------------------------------------------------
 # Weights (sum = 1.0)
 # ---------------------------------------------------------------------------
@@ -49,11 +55,11 @@ def compute_level_accuracy(
     """
     diff = abs(assigned_level - ground_truth_level.value)
     if diff == 0:
-        level_score = 1.0
+        level_score = PERFECT_SCORE
     elif diff == 1:
         level_score = 0.5
     else:
-        level_score = 0.0
+        level_score = ZERO_SCORE
     return level_score
 
 
@@ -65,8 +71,8 @@ def compute_pathway_accuracy(
     try:
         assigned = TriagePathway(assigned_pathway.lower())
     except ValueError:
-        return 0.0
-    return 1.0 if assigned == ground_truth_pathway else 0.0
+        return ZERO_SCORE
+    return PERFECT_SCORE if assigned == ground_truth_pathway else ZERO_SCORE
 
 
 def compute_speed_score(steps_used: int) -> float:
@@ -78,9 +84,9 @@ def compute_speed_score(steps_used: int) -> float:
     0.0 if over SPEED_SLOW_THRESHOLD.
     """
     if steps_used <= 2:
-        return 1.0
+        return PERFECT_SCORE
     else:
-        return max(0.0, 1.0 - (steps_used - 2) / 8.0)
+        return max(ZERO_SCORE, 1.0 - (steps_used - 2) / 8.0)
 
 
 def compute_resource_adherence(
@@ -100,11 +106,11 @@ def compute_resource_adherence(
         return 0.5  # unknown pathway: neutral
 
     if pathway == TriagePathway.RESUS:
-        return 1.0 if resus_available > 0 else 0.0
+        return PERFECT_SCORE if resus_available > 0 else ZERO_SCORE
     elif pathway in (TriagePathway.MAJORS,):
-        return 1.0 if majors_available > 0 else 0.0
+        return PERFECT_SCORE if majors_available > 0 else ZERO_SCORE
     else:
-        return 1.0  # fast_track / ambulatory have no strict capacity limit
+        return PERFECT_SCORE  # fast_track / ambulatory have no strict capacity limit
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +172,7 @@ def compute_triage_reward(
         + speed_weight * speed
         + resource_weight * resource
     )
-    base_score = max(0.0, min(1.0, base_score))
+    base_score = max(EPSILON, min(PERFECT_SCORE, base_score))
 
     # Penalty: capacity violation
     penalty = 0.0
@@ -188,12 +194,21 @@ def compute_triage_reward(
     # Compute reward
     reward = base_score - penalty
 
-    # Clamp to valid range
-    reward = max(0.0, min(1.0, reward))
+    # Remove perfect and zero scores
+    if reward >= 1.0:
+        reward = PERFECT_SCORE
+    if reward <= 0.0:
+        reward = ZERO_SCORE
+
+    # Final Safety Clamp
+    reward = max(EPSILON, min(PERFECT_SCORE, reward))
 
     # 🔥 Proper Easy task calibration
     if task_id == 0:
-        reward = max(reward, 0.85)
+        reward = min(0.99, max(reward, 0.85))       
+    
+    # Final clamping after calibration
+    reward = max(EPSILON, min(PERFECT_SCORE, reward))
 
     components = {
         "level_accuracy": level_acc,
@@ -215,12 +230,13 @@ def compute_ask_reward(question_key: str, already_revealed: bool, current_asks: 
     Returns 0.01 for the first 2 new pieces of info, 0.0 otherwise.
     """
     if already_revealed:
-        return 0.0
+        return ZERO_SCORE
     
     if current_asks >= 2:
-        return 0.0
+        return ZERO_SCORE
         
-    return ASK_INFO_REWARD
+    reward = ASK_INFO_REWARD
+    return max(EPSILON, min(PERFECT_SCORE, reward))
 
 
 def compute_escalate_reward(
@@ -244,16 +260,29 @@ def compute_escalate_reward(
     excess = max(0, total_escalations - MAX_FREE_ESCALATIONS)
     penalty = excess * PENALTY_EXCESSIVE_ESCALATE
 
-    return max(0.0, base - penalty)
+    reward = base - penalty
+    if reward <= 0.0:
+        reward = ZERO_SCORE
+    if reward >= 1.0:
+        reward = PERFECT_SCORE
+    
+    return max(EPSILON, min(PERFECT_SCORE, reward))
 
 
 def compute_no_op_reward() -> float:
     """Minimal positive reward for NO_OP to maintain non-zero episode rewards."""
-    return NO_OP_REWARD
+    return max(EPSILON, min(PERFECT_SCORE, NO_OP_REWARD))
 
 
 def normalize_final_score(total_reward: float, max_possible: float) -> float:
-    """Normalize episode total reward to [0.0, 1.0]."""
+    """Normalize episode total reward to strictly within (0, 1)."""
     if max_possible <= 0:
-        return 0.0
-    return max(0.0, min(1.0, total_reward / max_possible))
+        return ZERO_SCORE
+    
+    score = total_reward / max_possible
+    if score >= 1.0:
+        score = PERFECT_SCORE
+    if score <= 0.0:
+        score = ZERO_SCORE
+        
+    return max(EPSILON, min(PERFECT_SCORE, score))

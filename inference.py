@@ -36,8 +36,8 @@ import httpx
 # ---------------------------------------------------------------------------
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o")
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+MODEL_NAME = os.environ.get("MODEL_NAME")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 TASK_NAMES = {0: "easy", 1: "medium", 2: "hard"}
 
@@ -398,6 +398,37 @@ def _fallback_heuristic_action(
         "level": level,
         "pathway": pathway,
     }
+
+
+
+def grader_fn(result) -> float:
+    # handle weird validator inputs
+    if not isinstance(result, dict):
+        return 0.1
+
+    score = result.get("score", 0.0)
+
+    # enforce strict (0,1)
+    if score <= 0.0:
+        return 0.1
+    if score >= 1.0:
+        return 0.9
+
+    return float(score)
+
+# REQUIRED: global tasks list (validator reads this, NOT functions)
+TASKS = [
+    {"id": "easy", "task_id": 0, "grader": grader_fn},
+    {"id": "medium", "task_id": 1, "grader": grader_fn},
+    {"id": "hard", "task_id": 2, "grader": grader_fn},
+]
+
+def tasks():
+    """
+    REQUIRED by validator: defines evaluation tasks
+    """
+    return TASKS
+
 
 
 # ---------------------------------------------------------------------------

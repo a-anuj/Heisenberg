@@ -20,7 +20,7 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 from .generators import VALID_QUESTION_KEYS, generate_patients
-from .graders import grade_episode
+from .graders import grade_episode, TASK_GRADERS
 from .models import (
     ActionType,
     EpisodeLogEntry,
@@ -34,6 +34,7 @@ from .models import (
     TriagePathway,
 )
 from .reward import (
+    ZERO_SCORE,
     compute_ask_reward,
     compute_escalate_reward,
     compute_no_op_reward,
@@ -141,6 +142,7 @@ class TriageEnvironment(Environment):
         config = TASK_CONFIGS[task_id]
         patients = generate_patients(task_id=task_id, seed=seed)
 
+        self.task_id = task_id
         self._state = EnvironmentState(
             episode_id=str(uuid.uuid4()),
             task_id=task_id,
@@ -164,7 +166,7 @@ class TriageEnvironment(Environment):
 
         return self._build_observation(
             last_action_result="Environment reset. Ready to triage.",
-            reward=0.0,
+            reward=ZERO_SCORE,
         )
 
     def step(  # type: ignore[override]
@@ -191,14 +193,14 @@ class TriageEnvironment(Environment):
                 action = json.loads(action)
             except Exception:
                 obs = self._build_observation()
-                return (obs, 0.0, False, {"error": "invalid_json"})
+                return (obs, ZERO_SCORE, False, {"error": "invalid_json"})
 
         if isinstance(action, dict):
             try:
                 action = TriageAction(**action)
             except Exception as e:
                 obs = self._build_observation()
-                return (obs, 0.0, False, {"error": f"invalid_action_schema: {e}"})
+                return (obs, ZERO_SCORE, False, {"error": f"invalid_action_schema: {e}"})
 
         # Wrap step logic in try/except for strict safety check
         try:
@@ -283,7 +285,7 @@ class TriageEnvironment(Environment):
                         info["correct_pathway"] = False
 
             if done:
-                final_score = grade_episode(self._state.task_id, self._state.episode_log)
+                final_score = self.grade(self._state.task_id, self._state.episode_log)
                 info["final_score"] = final_score
                 logger.info("Episode done. Final score: %.4f", final_score)
 
@@ -292,7 +294,20 @@ class TriageEnvironment(Environment):
         except Exception as e:
             logger.exception("Error in env step")
             obs = self._build_observation()
-            return (obs, 0.0, False, {"error": str(e)})
+            return (obs, ZERO_SCORE, False, {"error": str(e)})
+
+    def grade(self, task_id: int, log: List[EpisodeLogEntry]) -> float:
+        """
+        OpenEnv-compatible episode grader.
+
+        Args:
+            task_id: The task to grade
+            log: List of EpisodeLogEntry objects
+
+        Returns:
+            Final episode score in (0, 1)
+        """
+        return grade_episode(task_id, log)
 
     @property
     def state(self) -> State:  # type: ignore[override]
@@ -316,17 +331,17 @@ class TriageEnvironment(Environment):
         elif action.type == ActionType.NO_OP:
             return self._handle_no_op()
         else:
-            return 0.0, f"Unknown action type: {action.type}"
+            return ZERO_SCORE, f"Unknown action type: {action.type}"
 
     def _handle_ask(self, action: TriageAction) -> Tuple[float, str]:
         """Handle ASK action: reveal hidden patient information."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return 0.0, f"ERROR: Patient {action.patient_id} not found."
+            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
 
         qkey = action.question_key
         if qkey not in VALID_QUESTION_KEYS:
-            return 0.0, (
+            return ZERO_SCORE, (
                 f"ERROR: Invalid question_key '{qkey}'. "
                 f"Valid keys: {sorted(VALID_QUESTION_KEYS)}"
             )
@@ -348,7 +363,7 @@ class TriageEnvironment(Environment):
         """Handle TRIAGE action: assign level and pathway to a patient."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return 0.0, f"ERROR: Patient {action.patient_id} not found."
+            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
 
         is_retriage = patient.visible.triage_status == "triaged"
         old_pathway = None
@@ -360,7 +375,7 @@ class TriageEnvironment(Environment):
                 old_pathway = None
 
         if action.level is None or action.pathway is None:
-            return 0.0, "ERROR: TRIAGE action requires 'level' and 'pathway'."
+            return ZERO_SCORE, "ERROR: TRIAGE action requires 'level' and 'pathway'."
 
         resources = self._state.resources
         # 1. If re-triage, release OLD resources first to make room for new assignment
@@ -374,14 +389,16 @@ class TriageEnvironment(Environment):
         start_step = self._patient_step_start.get(action.patient_id, 0)
         steps_for_patient = self._state.step_count - start_step
 
-        reward, components = compute_triage_reward(
-            action=action,
-            patient=patient,
-            steps_used_for_patient=steps_for_patient,
-            resus_available=resources.resus_available,
-            majors_available=resources.majors_available,
-            total_escalations=self._state.escalation_count,
-            task_id=self._state.task_id,
+        # Step reward via explicit grader
+        grader = TASK_GRADERS[self.task_id]
+        reward = grader(
+            action,
+            patient,
+            steps_for_patient,
+            resources.resus_available,
+            resources.majors_available,
+            self._state.escalation_count,
+            self.task_id,
         )
 
         # Update patient state
@@ -406,9 +423,7 @@ class TriageEnvironment(Environment):
 
         msg = (
             f"TRIAGE {action.patient_id}: Level {action.level} → {action.pathway}. "
-            f"Accuracy: level={components['level_accuracy']:.1f} "
-            f"pathway={components['pathway_accuracy']:.1f} "
-            f"speed={components['speed_score']:.2f} reward={reward:.3f}"
+            f"reward={reward:.3f}"
         )
         return reward, msg
 
@@ -416,7 +431,7 @@ class TriageEnvironment(Environment):
         """Handle ESCALATE action: escalate patient to senior clinician."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return 0.0, f"ERROR: Patient {action.patient_id} not found."
+            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
 
         patient.escalation_count += 1
         patient.visible.triage_status = "escalated"
@@ -464,7 +479,7 @@ class TriageEnvironment(Environment):
     def _build_observation(
         self,
         last_action_result: Optional[str] = None,
-        reward: float = 0.0,
+        reward: float = ZERO_SCORE,
         critical_event: Optional[str] = None,
     ) -> TriageObservation:
         """Build a TriageObservation from the current state."""

@@ -102,35 +102,46 @@ def health_check() -> Dict[str, str]:
 
 
 @app.post("/reset")
-def reset(request: ResetRequest) -> Dict[str, Any]:
+def reset(request: Optional[ResetRequest] = None) -> Dict[str, Any]:
     """
     Reset the environment for a new episode.
-
-    Args:
-        task_id: 0=easy (3 patients), 1=medium (8 patients), 2=hard (20 patients)
-        seed: Optional random seed for reproducability
     """
-    if request.task_id not in TASK_CONFIGS:
+
+    # Handle missing body (validator case)
+    if request is None:
+        task_id = 0
+        seed = None
+    else:
+        task_id = request.task_id if request.task_id is not None else 0
+        seed = request.seed
+
+    if task_id not in TASK_CONFIGS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid task_id {request.task_id}. Must be 0, 1, or 2.",
+            detail=f"Invalid task_id {task_id}. Must be 0, 1, or 2.",
         )
 
     env = get_env()
+
     try:
-        obs = env.reset(task_id=request.task_id, seed=request.seed)
+        obs = env.reset(task_id=task_id, seed=seed)
     except Exception as exc:
         logger.exception("Error during reset")
         raise HTTPException(status_code=500, detail=str(exc))
 
     logger.info(
         "Reset: task_id=%d seed=%s patients=%d",
-        request.task_id,
-        request.seed,
+        task_id,
+        seed,
         len(obs.patient_queue),
     )
-    return obs.model_dump()
 
+    return {
+        "observation": obs.model_dump(),
+        "reward": 0.0,
+        "done": False,
+        "info": {}
+    }
 
 @app.post("/step", response_model=StepResponse)
 def step(request: StepRequest) -> StepResponse:
