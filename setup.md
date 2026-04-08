@@ -3,7 +3,7 @@
 This guide ensures your environment is correctly configured to reproduce the benchmark results for the Clinical Triage Agent across Easy, Medium, and Hard tasks.
 
 ## 📋 Prerequisites
-- **Python**: 3.9 or higher
+- **Python**: 3.10 or higher
 - **Hardware**: No special GPU requirements (uses remote LLM inference)
 
 ## 🛠️ Installation
@@ -19,6 +19,8 @@ This guide ensures your environment is correctly configured to reproduce the ben
    pip install -r requirements.txt
    ```
 
+   Alternative (if you use `uv`): `uv sync`
+
 ## 🚀 Running the Simulation
 
 The simulation requires two components running simultaneously: the **FastAPI Server** (environment) and the **Inference Script** (agent).
@@ -27,7 +29,7 @@ The simulation requires two components running simultaneously: the **FastAPI Ser
 
 Open a terminal and start the backend:
 ```bash
-python3 app.py
+python3 -m server.app
 ```
 *Note: This runs on `http://127.0.0.1:7860` by default. Do not close this terminal.*
 
@@ -42,7 +44,12 @@ export HF_TOKEN="<your_api_key>"
 
 # Run the benchmark for a specific task
 # 0 = Easy, 1 = Medium, 2 = Hard
-python3 inference.py --task 2
+python3 inference.py --task_id 2
+```
+
+Run all tasks (recommended for pre-submission):
+```bash
+python3 inference.py --all_tasks
 ```
 
 ## 🎯 Benchmark Targets
