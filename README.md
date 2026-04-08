@@ -59,7 +59,7 @@ Grading:
 - `[END] ...`
 
 It supports:
-- LLM mode (requires `API_BASE_URL`, `MODEL_NAME`, `HF_TOKEN`)
+- LLM mode (requires `API_BASE_URL`, `MODEL_NAME`, `API_KEY`; `HF_TOKEN` supported as fallback)
 - Reproducible heuristic mode: `--no_llm` (recommended for quick checks)
 
 Baseline (heuristic, `--seed 42`):

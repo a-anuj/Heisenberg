@@ -7,7 +7,8 @@ that receives triage observations and produces structured actions.
 Environment variables:
     API_BASE_URL  - Base URL of the OpenAI-compatible API endpoint
     MODEL_NAME    - Name of the model to use
-    HF_TOKEN      - Hugging Face token (used as API key)
+    API_KEY       - API key for the provided proxy (preferred)
+    HF_TOKEN      - Backward-compatible fallback API key
 
 Log format (exact):
     [START] task=<task> env=clinical-triage-agent model=<model>
@@ -17,7 +18,7 @@ Log format (exact):
 Usage:
     API_BASE_URL=https://api.openai.com/v1 \
     MODEL_NAME=gpt-4o \
-    HF_TOKEN=hf_... \
+    API_KEY=sk_... \
     python inference.py --task_id 1 --seed 42 --env_url http://localhost:7860
 """
 
@@ -38,6 +39,7 @@ from openai import OpenAI
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME")
+API_KEY = os.environ.get("API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 TASK_NAMES = {0: "easy", 1: "medium", 2: "hard"}
@@ -174,8 +176,13 @@ def run_episode(
 
     env_client = EnvHTTPClient(env_url)
     agent = None
-    if use_llm and HF_TOKEN and MODEL_NAME:
-        agent = LLMTriageAgent(API_BASE_URL, MODEL_NAME, HF_TOKEN)
+    api_key = API_KEY or HF_TOKEN
+    if use_llm:
+        if not MODEL_NAME:
+            raise RuntimeError("MODEL_NAME is required when running with LLM mode.")
+        if not api_key:
+            raise RuntimeError("API_KEY (or HF_TOKEN fallback) is required in LLM mode.")
+        agent = LLMTriageAgent(API_BASE_URL, MODEL_NAME, api_key)
 
     rewards: List[float] = []
     errors: List[Optional[str]] = []
@@ -201,8 +208,9 @@ def run_episode(
             if agent is not None:
                 try:
                     action = agent.decide(obs, step)
-                except Exception:
-                    action = _fallback_heuristic_action(obs, ask_counts, escalated_patients, processed_patients)
+                except Exception as exc:
+                    # In LLM mode, do not silently bypass proxy/API failures.
+                    raise RuntimeError(f"LLM decision failed at step {step}: {exc}") from exc
             else:
                 action = _fallback_heuristic_action(obs, ask_counts, escalated_patients, processed_patients)
 

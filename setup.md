@@ -40,7 +40,9 @@ Open a **new** terminal and set your environment variables before running the be
 # Set your Groq or OpenAI compatible API details
 export API_BASE_URL="https://api.groq.com/openai/v1"
 export MODEL_NAME="openai/gpt-oss-120b"
-export HF_TOKEN="<your_api_key>"
+export API_KEY="<your_api_key>"
+# Backward-compatible fallback also supported:
+# export HF_TOKEN="<your_api_key>"
 
 # Run the benchmark for a specific task
 # 0 = Easy, 1 = Medium, 2 = Hard
@@ -70,4 +72,4 @@ python3 inference.py --all_tasks
 ## 🐛 Troubleshooting
 - **Infinite Loops**: Ensure `processed_patients` is correctly initialized in your local `inference.py`.
 - **Connection Refused**: Verify the server (`app.py`) is running on port 7860 before starting inference.
-- **Low Scores**: Check that `HF_TOKEN` is valid and the model has permission to access the `API_BASE_URL`.
+- **Low Scores**: Check that `API_KEY` is valid and the model has permission to access the `API_BASE_URL`.
