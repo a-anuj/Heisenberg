@@ -30,6 +30,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 import httpx
+from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -80,7 +81,7 @@ class EnvHTTPClient:
 # ---------------------------------------------------------------------------
 
 class LLMTriageAgent:
-    """OpenAI-compatible LLM agent for triage decisions."""
+    """OpenAI Python SDK based LLM agent for triage decisions."""
 
     SYSTEM_PROMPT = """You are an expert clinical triage agent operating in an emergency department simulation.
 
@@ -112,14 +113,7 @@ Your goal: Correct triage while maximizing efficiency and managing critical reso
         self.api_base_url = api_base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
-        self.client = httpx.Client(
-            base_url=api_base_url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=60.0,
-        )
+        self.client = OpenAI(base_url=self.api_base_url, api_key=self.api_key)
 
     def decide(self, observation: Dict[str, Any], step: int) -> Dict[str, Any]:
         """Send observation to LLM and get an action."""
@@ -135,18 +129,14 @@ Your goal: Correct triage while maximizing efficiency and managing critical reso
             },
         ]
 
-        response = self.client.post(
-            "/chat/completions",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.0,
-                "max_tokens": 256,
-                "response_format": {"type": "json_object"},
-            },
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=256,
+            response_format={"type": "json_object"},
         )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"].strip()
+        content = (resp.choices[0].message.content or "").strip()
 
         # Parse JSON action from response
         # Strip markdown code blocks if present
@@ -157,7 +147,8 @@ Your goal: Correct triage while maximizing efficiency and managing critical reso
         return json.loads(content.strip())
 
     def close(self) -> None:
-        self.client.close()
+        # OpenAI client has no explicit close requirement.
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -178,14 +169,12 @@ def run_episode(
     """
     task_name = TASK_NAMES.get(task_id, str(task_id))
 
-    print(
-        f"[START] task={task_name} env=clinical-triage-agent model={MODEL_NAME}",
-        flush=True,
-    )
+    model_for_log = MODEL_NAME or "none"
+    print(f"[START] task={task_name} env=clinical-triage-agent model={model_for_log}", flush=True)
 
     env_client = EnvHTTPClient(env_url)
     agent = None
-    if use_llm and HF_TOKEN:
+    if use_llm and HF_TOKEN and MODEL_NAME:
         agent = LLMTriageAgent(API_BASE_URL, MODEL_NAME, HF_TOKEN)
 
     rewards: List[float] = []
@@ -277,7 +266,7 @@ def run_episode(
     
     print(
         f"[END] success={str(success).lower()} steps={total_steps} "
-        f"score={final_score:.2f} rewards={rewards_str}",
+        f"score={final_score:.2f} rewards=[{rewards_str}]",
         flush=True,
     )
 
@@ -442,14 +431,19 @@ def main() -> None:
     parser.add_argument(
         "--task_id",
         type=int,
-        default=0,
+        default=None,
         choices=[0, 1, 2],
         help="Task difficulty: 0=easy, 1=medium, 2=hard",
     )
     parser.add_argument(
+        "--all_tasks",
+        action="store_true",
+        help="Run tasks 0, 1, and 2 sequentially (default when --task_id is omitted)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
-        default=None,
+        default=42,
         help="Random seed for reproducibility",
     )
     parser.add_argument(
@@ -470,6 +464,17 @@ def main() -> None:
         help="Use heuristic fallback instead of LLM agent",
     )
     args = parser.parse_args()
+
+    if args.all_tasks or args.task_id is None:
+        for tid in (0, 1, 2):
+            run_episode(
+                env_url=args.env_url,
+                task_id=tid,
+                seed=args.seed,
+                max_steps=args.max_steps,
+                use_llm=not args.no_llm,
+            )
+        return
 
     run_episode(
         env_url=args.env_url,
