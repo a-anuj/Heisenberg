@@ -6,7 +6,10 @@ that receives triage observations and produces structured actions.
 
 Environment variables:
     API_BASE_URL  - Base URL of the OpenAI-compatible API endpoint
-    MODEL_NAME    - Name of the model to use
+    MODEL_NAME    - Name of the model to use (optional if proxy supports model listing)
+    OPENAI_MODEL  - Alternate model env var name
+    MODEL         - Alternate model env var name
+    LITELLM_MODEL - Alternate model env var name
     API_KEY       - API key for the provided proxy (preferred)
     HF_TOKEN      - Backward-compatible fallback API key
 
@@ -38,7 +41,12 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME")
+MODEL_NAME = (
+    os.environ.get("MODEL_NAME")
+    or os.environ.get("OPENAI_MODEL")
+    or os.environ.get("MODEL")
+    or os.environ.get("LITELLM_MODEL")
+)
 API_KEY = os.environ.get("API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
@@ -153,6 +161,34 @@ Your goal: Correct triage while maximizing efficiency and managing critical reso
         return None
 
 
+def _resolve_model_name(api_base_url: str, api_key: str, model_name: Optional[str]) -> str:
+    """
+    Resolve model name for proxy-backed runs.
+
+    Order:
+    1. Explicit env-derived model
+    2. First model returned by /models
+    3. Safe default
+    """
+    if model_name:
+        return model_name
+
+    try:
+        client = OpenAI(base_url=api_base_url.rstrip("/"), api_key=api_key)
+        models = client.models.list()
+        data = getattr(models, "data", None) or []
+        if data:
+            first = data[0]
+            candidate = getattr(first, "id", None)
+            if candidate:
+                return str(candidate)
+    except Exception:
+        pass
+
+    # Final fallback if model listing is unavailable on proxy
+    return "gpt-4o-mini"
+
+
 # ---------------------------------------------------------------------------
 # Episode runner
 # ---------------------------------------------------------------------------
@@ -170,19 +206,9 @@ def run_episode(
     Returns dict with: success, steps, score, rewards, errors
     """
     task_name = TASK_NAMES.get(task_id, str(task_id))
-
-    model_for_log = MODEL_NAME or "none"
-    print(f"[START] task={task_name} env=clinical-triage-agent model={model_for_log}", flush=True)
-
     env_client = EnvHTTPClient(env_url)
     agent = None
-    api_key = API_KEY or HF_TOKEN
-    if use_llm:
-        if not MODEL_NAME:
-            raise RuntimeError("MODEL_NAME is required when running with LLM mode.")
-        if not api_key:
-            raise RuntimeError("API_KEY (or HF_TOKEN fallback) is required in LLM mode.")
-        agent = LLMTriageAgent(API_BASE_URL, MODEL_NAME, api_key)
+    resolved_model_name: Optional[str] = MODEL_NAME
 
     rewards: List[float] = []
     errors: List[Optional[str]] = []
@@ -194,6 +220,16 @@ def run_episode(
     success = False
 
     try:
+        api_key = API_KEY or HF_TOKEN
+        if use_llm:
+            if not api_key:
+                raise RuntimeError("API_KEY (or HF_TOKEN fallback) is required in LLM mode.")
+            resolved_model_name = _resolve_model_name(API_BASE_URL, api_key, MODEL_NAME)
+            agent = LLMTriageAgent(API_BASE_URL, resolved_model_name, api_key)
+
+        model_for_log = resolved_model_name or "none"
+        print(f"[START] task={task_name} env=clinical-triage-agent model={model_for_log}", flush=True)
+
         # Reset
         obs = env_client.reset(task_id=task_id, seed=seed)
         done = obs.get("done", obs.get("episode_done", False))
