@@ -6,7 +6,6 @@ __pycache__/
 # Logs
 *.log
 *.pid
-*.txt
 
 # Secrets
 .env

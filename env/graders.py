@@ -9,6 +9,18 @@ from .reward import (
     PERFECT_SCORE, 
     ZERO_SCORE
 )
+# --- OpenEnv Validator Graders ---
+# The Phase 2 validator tests graders by passing an 'episode_log' kwarg.
+# These wrappers safely handle that without crashing compute_triage_reward.
+
+def eval_easy(episode_log=None, **kwargs) -> float:
+    return grade_episode(0, episode_log)
+
+def eval_medium(episode_log=None, **kwargs) -> float:
+    return grade_episode(1, episode_log)
+
+def eval_hard(episode_log=None, **kwargs) -> float:
+    return grade_episode(2, episode_log)
 
 def grade_easy(*args, **kwargs):
     """Explicit grader for Easy task."""
@@ -29,11 +41,11 @@ TASK_GRADERS = {
     2: grade_hard,
 }
 
-# TASKS descriptor for OpenEnv validator
+# REQUIRED: global tasks list (validator reads this, NOT functions)
 TASKS = [
-    {"id": "easy", "task_id": 0, "grader": grade_easy},
-    {"id": "medium", "task_id": 1, "grader": grade_medium},
-    {"id": "hard", "task_id": 2, "grader": grade_hard},
+    {"id": 0, "name": "easy", "grader": "env.graders:eval_easy"},
+    {"id": 1, "name": "medium", "grader": "env.graders:eval_medium"},
+    {"id": 2, "name": "hard", "grader": "env.graders:eval_hard"},
 ]
 
 def grade_episode(task_id: int, episode_log=None) -> float:
