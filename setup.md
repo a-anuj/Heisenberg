@@ -25,11 +25,6 @@ The simulation requires two components running simultaneously: the **FastAPI Ser
 
 ### 1. Start the Environment Server
 
-Navigate to the project directory:
-```bash
-cd clinical-triage-agent
-```
-
 Open a terminal and start the backend:
 ```bash
 python3 app.py
