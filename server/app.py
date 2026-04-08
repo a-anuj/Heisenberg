@@ -3,7 +3,7 @@ FastAPI application for the Clinical Triage Agent Environment.
 """
 
 from openenv.core.env_server.http_server import create_app
-from models import TriageAction, TriageObservation
+from env.models import TriageAction, TriageObservation
 from env.triage_env import TriageEnvironment
 
 import uvicorn
@@ -16,6 +16,10 @@ app = create_app(
     env_name="clinical-triage-agent",
     max_concurrent_envs=4,
 )
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "env": "clinical-triage-agent"}
 
 
 def main():

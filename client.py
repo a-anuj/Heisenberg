@@ -13,7 +13,7 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import TriageAction, TriageObservation, PatientSummary, Vitals, Resources
+from env.models import TriageAction, TriageObservation, PatientSummary, Vitals, Resources
 
 
 class TriageEnv(EnvClient[TriageAction, TriageObservation, State]):
