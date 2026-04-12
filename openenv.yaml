@@ -15,7 +15,7 @@ tasks:
     description: "20 patients, dynamic waves, critical event mid-episode"
 observation_space: structured_dict
 action_space: typed_discrete
-reward_range: [0.0, 1.0]
+reward_range: [0.01, 0.99]
 partial_observability: true
 seed_support: true
 type: space

@@ -149,7 +149,7 @@ def reset(request: Optional[ResetRequest] = None) -> Dict[str, Any]:
 
     return {
         "observation": obs.model_dump(),
-        "reward": 0.0,
+        "reward": 0.01,
         "done": False,
         "info": {}
     }

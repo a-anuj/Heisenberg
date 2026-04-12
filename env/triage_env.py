@@ -34,7 +34,6 @@ from .models import (
     TriagePathway,
 )
 from .reward import (
-    ZERO_SCORE,
     compute_ask_reward,
     compute_escalate_reward,
     compute_no_op_reward,
@@ -166,7 +165,7 @@ class TriageEnvironment(Environment):
 
         return self._build_observation(
             last_action_result="Environment reset. Ready to triage.",
-            reward=ZERO_SCORE,
+            reward=0.01,
         )
 
     def step(  # type: ignore[override]
@@ -193,14 +192,14 @@ class TriageEnvironment(Environment):
                 action = json.loads(action)
             except Exception:
                 obs = self._build_observation()
-                return (obs, ZERO_SCORE, False, {"error": "invalid_json"})
+                return (obs, 0.01, False, {"error": "invalid_json"})
 
         if isinstance(action, dict):
             try:
                 action = TriageAction(**action)
             except Exception as e:
                 obs = self._build_observation()
-                return (obs, ZERO_SCORE, False, {"error": f"invalid_action_schema: {e}"})
+                return (obs, 0.01, False, {"error": f"invalid_action_schema: {e}"})
 
         # Wrap step logic in try/except for strict safety check
         try:
@@ -294,7 +293,7 @@ class TriageEnvironment(Environment):
         except Exception as e:
             logger.exception("Error in env step")
             obs = self._build_observation()
-            return (obs, ZERO_SCORE, False, {"error": str(e)})
+            return (obs, 0.01, False, {"error": str(e)})
 
     def grade(self, task_id: int, log: List[EpisodeLogEntry]) -> float:
         """
@@ -331,17 +330,17 @@ class TriageEnvironment(Environment):
         elif action.type == ActionType.NO_OP:
             return self._handle_no_op()
         else:
-            return ZERO_SCORE, f"Unknown action type: {action.type}"
+            return 0.01, f"Unknown action type: {action.type}"
 
     def _handle_ask(self, action: TriageAction) -> Tuple[float, str]:
         """Handle ASK action: reveal hidden patient information."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
+            return 0.01, f"ERROR: Patient {action.patient_id} not found."
 
         qkey = action.question_key
         if qkey not in VALID_QUESTION_KEYS:
-            return ZERO_SCORE, (
+            return 0.01, (
                 f"ERROR: Invalid question_key '{qkey}'. "
                 f"Valid keys: {sorted(VALID_QUESTION_KEYS)}"
             )
@@ -363,7 +362,7 @@ class TriageEnvironment(Environment):
         """Handle TRIAGE action: assign level and pathway to a patient."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
+            return 0.01, f"ERROR: Patient {action.patient_id} not found."
 
         is_retriage = patient.visible.triage_status == "triaged"
         old_pathway = None
@@ -375,7 +374,7 @@ class TriageEnvironment(Environment):
                 old_pathway = None
 
         if action.level is None or action.pathway is None:
-            return ZERO_SCORE, "ERROR: TRIAGE action requires 'level' and 'pathway'."
+            return 0.01, "ERROR: TRIAGE action requires 'level' and 'pathway'."
 
         resources = self._state.resources
         # 1. If re-triage, release OLD resources first to make room for new assignment
@@ -431,7 +430,7 @@ class TriageEnvironment(Environment):
         """Handle ESCALATE action: escalate patient to senior clinician."""
         patient = self._find_patient(action.patient_id)
         if patient is None:
-            return ZERO_SCORE, f"ERROR: Patient {action.patient_id} not found."
+            return 0.01, f"ERROR: Patient {action.patient_id} not found."
 
         patient.escalation_count += 1
         patient.visible.triage_status = "escalated"
@@ -479,7 +478,7 @@ class TriageEnvironment(Environment):
     def _build_observation(
         self,
         last_action_result: Optional[str] = None,
-        reward: float = ZERO_SCORE,
+        reward: float = 0.01,
         critical_event: Optional[str] = None,
     ) -> TriageObservation:
         """Build a TriageObservation from the current state."""

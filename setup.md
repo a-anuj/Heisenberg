@@ -49,9 +49,9 @@ python3 inference.py --task 2
 
 | Task ID | Difficulty | Target Score | Key Focus |
 | :--- | :--- | :--- | :--- |
-| **0** | Easy | ≥ 0.90 | Basic triage accuracy |
-| **1** | Medium | ≥ 0.70 | Selective `ASK` strategy |
-| **2** | Hard | ≥ 0.60 | Arrest interrupts & Resource reallocation |
+| **0** | Easy | 0.70 – 0.80 | Basic triage accuracy |
+| **1** | Medium | 0.50 – 0.65 | Selective `ASK` strategy |
+| **2** | Hard | 0.20 – 0.40 | Arrest interrupts & Resource reallocation |
 
 ## 📁 Key Project Files
 

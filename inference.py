@@ -391,19 +391,12 @@ def _fallback_heuristic_action(
 
 
 def grader_fn(result) -> float:
-    # handle weird validator inputs
+    """Grade episode result — returns score in (0.01, 0.99)."""
     if not isinstance(result, dict):
-        return 0.1
+        return 0.01
 
     score = result.get("score", 0.0)
-
-    # enforce strict (0,1)
-    if score <= 0.0:
-        return 0.1
-    if score >= 1.0:
-        return 0.9
-
-    return float(score)
+    return max(0.01, min(0.99, float(score)))
 
 # REQUIRED: global tasks list (validator reads this, NOT functions)
 TASKS = [
