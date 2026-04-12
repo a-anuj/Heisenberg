@@ -63,6 +63,10 @@
                 <option value="NO_OP">NO_OP</option>
             </select>
         </div>
+        <div id="patient_select_container" style="margin-top: 10px;">
+            <label>Target Patient:</label>
+            <select id="arg_patient_id"></select>
+        </div>
         <div id="action_form" style="margin-top:10px; display: grid; gap: 10px;">
             <!-- Rendered dynamically -->
         </div>
@@ -92,6 +96,7 @@
 
 <script>
     let totalReward = 0.0;
+    let currentObservation = null;
 
     async function loadState() {
         try {
@@ -109,6 +114,30 @@
         }
     }
 
+    function populatePatientDropdown() {
+        const select = document.getElementById('arg_patient_id');
+        const prevValue = select.value;
+        select.innerHTML = '';
+        
+        if (currentObservation && currentObservation.patient_queue && currentObservation.patient_queue.length > 0) {
+            currentObservation.patient_queue.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.patient_id;
+                opt.innerText = p.patient_id;
+                select.appendChild(opt);
+            });
+            // Try to keep previously selected value if still in queue
+            if (Array.from(select.options).some(o => o.value === prevValue)) {
+                select.value = prevValue;
+            }
+        } else {
+            const opt = document.createElement('option');
+            opt.value = "";
+            opt.innerText = "No patients available";
+            select.appendChild(opt);
+        }
+    }
+
     async function resetEnv() {
         const taskId = parseInt(document.getElementById('task_id').value);
         try {
@@ -120,6 +149,8 @@
             const data = await res.json();
             
             totalReward = 0.0;
+            currentObservation = data.observation;
+            
             document.getElementById('val_reward').innerText = "0.0";
             document.getElementById('val_total_reward').innerText = "0.0";
             document.getElementById('val_done').innerText = "IN PROGRESS";
@@ -128,6 +159,8 @@
             document.getElementById('display_action').innerText = "{}";
             document.getElementById('display_info').innerText = "{}";
             
+            populatePatientDropdown();
+            updateActionForm();
             loadState();
         } catch(e) {
             alert("Error resetting environment" + e);
@@ -137,10 +170,13 @@
     function updateActionForm() {
         const type = document.getElementById('action_type').value;
         const form = document.getElementById('action_form');
+        const patientContainer = document.getElementById('patient_select_container');
         let html = '';
         
-        if (type !== 'NO_OP') {
-            html += `<input type="text" id="arg_patient_id" placeholder="Patient ID (e.g. PAT-001)" required>`;
+        if (type === 'NO_OP') {
+            patientContainer.style.display = 'none';
+        } else {
+            patientContainer.style.display = 'block';
         }
         
         if (type === 'ASK') {
@@ -181,9 +217,12 @@
         const actionPayload = { type: type };
         
         if (type !== 'NO_OP') {
-            const pidInput = document.getElementById('arg_patient_id');
-            if(!pidInput || !pidInput.value) { alert("Patient ID is required"); return; }
-            actionPayload.patient_id = pidInput.value;
+            const pid = document.getElementById('arg_patient_id').value;
+            if (!pid) {
+                alert("No valid patient selected!");
+                return;
+            }
+            actionPayload.patient_id = pid;
         }
         
         if (type === 'ASK') {
@@ -211,6 +250,8 @@
             const data = await res.json();
             
             totalReward += data.reward;
+            currentObservation = data.observation;
+            
             document.getElementById('val_reward').innerText = data.reward.toFixed(2);
             document.getElementById('val_total_reward').innerText = totalReward.toFixed(2);
             document.getElementById('val_done').innerText = data.done ? "DONE" : "IN PROGRESS";
@@ -218,6 +259,7 @@
             document.getElementById('display_observation').innerText = JSON.stringify(data.observation, null, 2);
             document.getElementById('display_info').innerText = JSON.stringify(data.info, null, 2);
             
+            populatePatientDropdown();
             loadState();
         } catch(e) {
             alert("Error running step" + e);
