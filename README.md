@@ -111,13 +111,13 @@ docker run -p 7860:7860 clinical-triage-agent
 
 ## Baseline Scores
 
-Scores from heuristic fallback agent (seed=42):
+Actual scores achieved using **no_llm** (`seed=42`):
 
-| Task | Score Range | Notes |
-|------|-----------|-------|
-| Easy | 0.70 – 0.80 | Straightforward with visible patient info |
-| Medium | 0.50 – 0.65 | Requires strategic ASK usage |
-| Hard | 0.20 – 0.40 | Mass casualty + resource management challenge |
+| Task | Score | Expected Range | Notes |
+|------|--------------|----------------|-------|
+| Easy | **0.79** | 0.70 – 0.80 | Straightforward with visible patient info |
+| Medium | **0.57** | 0.50 – 0.65 | Requires strategic ASK usage |
+| Hard | **0.29** | 0.20 – 0.40 | Mass casualty + resource management challenge |
 
 ## Project Structure
 
