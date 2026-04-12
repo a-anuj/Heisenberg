@@ -95,6 +95,17 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def get_ui():
+    from fastapi.responses import HTMLResponse
+    try:
+        with open("index.html", "r") as f:
+            html = f.read()
+        return HTMLResponse(content=html, status_code=200)
+    except Exception as e:
+        return {"error": f"index.html not found: {e}"}
+
+
 @app.get("/health")
 def health_check() -> Dict[str, str]:
     """Health check endpoint."""

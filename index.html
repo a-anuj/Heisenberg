@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Triage Agent UI</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background: #121212; color: #e0e0e0; }
+        .container { max-width: 1200px; margin: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .panel { background: #1e1e1e; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        h1, h2, h3 { margin-top: 0; color: #fff; }
+        .header { grid-column: 1 / -1; }
+        input, select, button { padding: 8px 12px; margin: 5px 0; border: 1px solid #333; border-radius: 4px; background: #2a2a2a; color: #fff; }
+        button { background: #007acc; color: white; border: none; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #005f9e; }
+        pre { background: #000; padding: 15px; border-radius: 4px; overflow-x: auto; color: #00ff00; font-size: 13px; max-height: 400px; overflow-y: auto; }
+        .flex-row { display: flex; gap: 10px; align-items: center; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .info-box { background: #2a2a2a; padding: 10px; border-radius: 4px; }
+        .info-box strong { display: block; color: #888; font-size: 0.85em; margin-bottom: 5px; text-transform: uppercase; }
+        hr { border: 0; border-top: 1px solid #333; margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="panel header">
+        <h1>Clinical Triage Agent</h1>
+        <p>Production-grade OpenEnv-compliant emergency department triage simulation dashboard.</p>
+    </div>
+
+    <div class="panel">
+        <h2>Environment Info & Controls</h2>
+        
+        <div class="flex-row">
+            <label>Task ID:</label>
+            <select id="task_id">
+                <option value="0">0 (Easy - 3 patients)</option>
+                <option value="1">1 (Medium - 8 patients)</option>
+                <option value="2">2 (Hard - 20 patients)</option>
+            </select>
+            <button onclick="resetEnv()">Reset Environment</button>
+        </div>
+        
+        <hr>
+        
+        <div class="info-grid" id="state_info">
+            <div class="info-box"><strong>Episode ID</strong> <span id="val_episode">-</span></div>
+            <div class="info-box"><strong>Step Count</strong> <span id="val_step">-</span></div>
+            <div class="info-box"><strong>Budget</strong> <span id="val_budget">-</span></div>
+            <div class="info-box"><strong>Pending / Total</strong> <span id="val_patients">- / -</span></div>
+        </div>
+
+        <hr>
+
+        <h3>Manual Action Input</h3>
+        <div>
+            <label>Action Type:</label>
+            <select id="action_type" onchange="updateActionForm()">
+                <option value="ASK">ASK</option>
+                <option value="TRIAGE">TRIAGE</option>
+                <option value="ESCALATE">ESCALATE</option>
+                <option value="NO_OP">NO_OP</option>
+            </select>
+        </div>
+        <div id="action_form" style="margin-top:10px; display: grid; gap: 10px;">
+            <!-- Rendered dynamically -->
+        </div>
+        <br>
+        <button onclick="runStep()" style="width: 100%; font-size: 1.1em; padding: 12px;">Run Step</button>
+    </div>
+
+    <div class="panel">
+        <h2>Feedback & Summary</h2>
+        <div class="info-grid">
+            <div class="info-box"><strong>Reward (Last Step)</strong> <span id="val_reward">0.0</span></div>
+            <div class="info-box"><strong>Total Reward</strong> <span id="val_total_reward">0.0</span></div>
+            <div class="info-box"><strong>Status</strong> <span id="val_done">NOT STARTED</span></div>
+        </div>
+        <hr>
+        <h3>Last Action Taken</h3>
+        <pre id="display_action">{}</pre>
+        <h3>Info / Grader Feedback</h3>
+        <pre id="display_info">{}</pre>
+    </div>
+
+    <div class="panel header" style="grid-column: 1 / -1;">
+        <h2>Observation Panel</h2>
+        <pre id="display_observation">Press "Reset Environment" to start.</pre>
+    </div>
+</div>
+
+<script>
+    let totalReward = 0.0;
+
+    async function loadState() {
+        try {
+            const res = await fetch('/state');
+            const data = await res.json();
+            document.getElementById('val_episode').innerText = data.episode_id || '-';
+            document.getElementById('val_step').innerText = data.step_count;
+            document.getElementById('val_budget').innerText = data.budget_remaining !== null ? data.budget_remaining : '-';
+            document.getElementById('val_patients').innerText = `${data.n_pending !== null ? data.n_pending : '-'} / ${data.n_patients !== null ? data.n_patients : '-'}`;
+            if(data.episode_id && document.getElementById('val_done').innerText === "NOT STARTED") {
+                document.getElementById('val_done').innerText = "IN PROGRESS";
+            }
+        } catch (e) {
+            console.error("Failed to load state", e);
+        }
+    }
+
+    async function resetEnv() {
+        const taskId = parseInt(document.getElementById('task_id').value);
+        try {
+            const res = await fetch('/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: taskId, seed: 42 })
+            });
+            const data = await res.json();
+            
+            totalReward = 0.0;
+            document.getElementById('val_reward').innerText = "0.0";
+            document.getElementById('val_total_reward').innerText = "0.0";
+            document.getElementById('val_done').innerText = "IN PROGRESS";
+            
+            document.getElementById('display_observation').innerText = JSON.stringify(data.observation, null, 2);
+            document.getElementById('display_action').innerText = "{}";
+            document.getElementById('display_info').innerText = "{}";
+            
+            loadState();
+        } catch(e) {
+            alert("Error resetting environment" + e);
+        }
+    }
+
+    function updateActionForm() {
+        const type = document.getElementById('action_type').value;
+        const form = document.getElementById('action_form');
+        let html = '';
+        
+        if (type !== 'NO_OP') {
+            html += `<input type="text" id="arg_patient_id" placeholder="Patient ID (e.g. PAT-001)" required>`;
+        }
+        
+        if (type === 'ASK') {
+            html += `<select id="arg_question">
+                <option value="pain_scale">Pain Scale</option>
+                <option value="duration">Duration</option>
+                <option value="history">History</option>
+                <option value="medications">Medications</option>
+            </select>`;
+        } else if (type === 'TRIAGE') {
+            html += `
+            <select id="arg_level">
+                <option value="1">1 - Resuscitation</option>
+                <option value="2">2 - Emergent</option>
+                <option value="3">3 - Urgent</option>
+                <option value="4">4 - Less Urgent</option>
+                <option value="5">5 - Non-Urgent</option>
+            </select>
+            <select id="arg_pathway">
+                <option value="resus">Resus</option>
+                <option value="majors">Majors</option>
+                <option value="minors">Minors</option>
+                <option value="fast_track">Fast Track</option>
+                <option value="ambulatory">Ambulatory</option>
+            </select>
+            `;
+        }
+        form.innerHTML = html;
+    }
+
+    async function runStep() {
+        if(document.getElementById('val_done').innerText === "DONE") {
+            alert("Episode is already done. Please reset.");
+            return;
+        }
+
+        const type = document.getElementById('action_type').value;
+        const actionPayload = { type: type };
+        
+        if (type !== 'NO_OP') {
+            const pidInput = document.getElementById('arg_patient_id');
+            if(!pidInput || !pidInput.value) { alert("Patient ID is required"); return; }
+            actionPayload.patient_id = pidInput.value;
+        }
+        
+        if (type === 'ASK') {
+            actionPayload.question_key = document.getElementById('arg_question').value;
+        } else if (type === 'TRIAGE') {
+            actionPayload.level = parseInt(document.getElementById('arg_level').value);
+            actionPayload.pathway = document.getElementById('arg_pathway').value;
+        }
+
+        document.getElementById('display_action').innerText = JSON.stringify(actionPayload, null, 2);
+
+        try {
+            const res = await fetch('/step', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: actionPayload })
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json();
+                document.getElementById('display_info').innerText = JSON.stringify(errorData, null, 2);
+                return;
+            }
+
+            const data = await res.json();
+            
+            totalReward += data.reward;
+            document.getElementById('val_reward').innerText = data.reward.toFixed(2);
+            document.getElementById('val_total_reward').innerText = totalReward.toFixed(2);
+            document.getElementById('val_done').innerText = data.done ? "DONE" : "IN PROGRESS";
+            
+            document.getElementById('display_observation').innerText = JSON.stringify(data.observation, null, 2);
+            document.getElementById('display_info').innerText = JSON.stringify(data.info, null, 2);
+            
+            loadState();
+        } catch(e) {
+            alert("Error running step" + e);
+        }
+    }
+
+    // Initialize
+    updateActionForm();
+    loadState();
+</script>
+</body>
+</html>
