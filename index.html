@@ -133,7 +133,7 @@
         } else {
             const opt = document.createElement('option');
             opt.value = "";
-            opt.innerText = "No patients available";
+            opt.innerText = "Please 'Reset Environment' first";
             select.appendChild(opt);
         }
     }
@@ -268,6 +268,7 @@
 
     // Initialize
     updateActionForm();
+    populatePatientDropdown();
     loadState();
 </script>
 </body>
